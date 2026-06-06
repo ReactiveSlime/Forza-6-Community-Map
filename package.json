@@ -1,0 +1,14 @@
+{
+  "name": "fh6-live-map",
+  "version": "1.0.0",
+  "description": "Public live map showing all connected players in Forza Horizon 6",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "download-tiles": "node scripts/download-map-tiles.mjs --all --out static/maptiles"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
+  }
+}

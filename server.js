@@ -1,0 +1,341 @@
+import dgram from 'node:dgram';
+import http from 'node:http';
+import { readFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
+import { dirname as pathDirname, extname, normalize, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { WebSocket, WebSocketServer } from 'ws';
+import { readTelemetryPacket } from './telemetry.js';
+
+// Load settings from settings.json with environment variable overrides
+function loadSettings() {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = dirname(__filename);
+  const settingsPath = `${__dirname}/settings.json`;
+
+  let settings = {
+    server: { port: 3001, host: '0.0.0.0', cacheControl: 'no-store' },
+    telemetry: { udpPort: 20441, connectionTimeoutMs: 2000, broadcastIntervalMs: 250 },
+    logging: { enabled: true, level: 'info' },
+    tiles: { autoDetect: true },
+  };
+
+  if (existsSync(settingsPath)) {
+    try {
+      const fileContent = readFileSync(settingsPath, 'utf-8');
+      const loaded = JSON.parse(fileContent);
+      settings = { ...settings, ...loaded };
+    } catch (error) {
+      console.warn(`Warning: Could not load settings.json (${error.message}). Using defaults.`);
+    }
+  }
+
+  // Environment variables override file settings
+  if (process.env.HTTP_PORT) settings.server.port = Number(process.env.HTTP_PORT);
+  if (process.env.UDP_PORT) settings.telemetry.udpPort = Number(process.env.UDP_PORT);
+  if (process.env.HOST) settings.server.host = process.env.HOST;
+  if (process.env.CONNECTION_TIMEOUT_MS) settings.telemetry.connectionTimeoutMs = Number(process.env.CONNECTION_TIMEOUT_MS);
+
+  return settings;
+}
+
+const settings = loadSettings();
+const PORT = settings.server.port;
+const UDP_PORT = settings.telemetry.udpPort;
+const HOST = settings.server.host;
+const CONNECTION_TIMEOUT_MS = settings.telemetry.connectionTimeoutMs;
+
+const MIME_TYPES = {
+  '.html': 'text/html; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'application/javascript; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+};
+
+// Utility for logging with settings support
+function log(...args) {
+  if (settings.logging.enabled) {
+    console.log(...args);
+  }
+}
+
+function buildTileMeta() {
+  const base = new URL('./src/static/maptiles', import.meta.url);
+  if (!existsSync(base)) {
+    return {
+      minZoom: 0,
+      maxZoom: 22,
+      minX: 0,
+      minY: 0,
+      maxX: 2 ** 13,
+      maxY: 2 ** 13,
+    };
+  }
+
+  const zoomDirs = readdirSync(base, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map((entry) => Number(entry.name))
+    .sort((a, b) => a - b);
+
+  if (zoomDirs.length === 0) {
+    return {
+      minZoom: 0,
+      maxZoom: 22,
+      minX: 0,
+      minY: 0,
+      maxX: 2 ** 13,
+      maxY: 2 ** 13,
+    };
+  }
+
+  const midZoom = zoomDirs[Math.floor(zoomDirs.length / 2)];
+  const midPath = new URL(`./src/static/maptiles/${midZoom}/`, import.meta.url);
+  const xDirs = readdirSync(midPath, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && /^\d+$/.test(entry.name))
+    .map((entry) => Number(entry.name))
+    .sort((a, b) => a - b);
+
+  let minX = 0;
+  let maxX = 2 ** midZoom;
+  let minY = 0;
+  let maxY = 2 ** midZoom;
+
+  if (xDirs.length > 0) {
+    minX = xDirs[0];
+    maxX = xDirs[xDirs.length - 1];
+
+    const yValues = [];
+    for (const x of xDirs) {
+      const yPath = new URL(`./src/static/maptiles/${midZoom}/${x}/`, import.meta.url);
+      const files = readdirSync(yPath, { withFileTypes: true })
+        .filter((entry) => entry.isFile() && /^\d+\.(jpg|jpeg|png|webp)$/i.test(entry.name))
+        .map((entry) => Number(entry.name.split('.')[0]));
+      yValues.push(...files);
+    }
+
+    if (yValues.length > 0) {
+      yValues.sort((a, b) => a - b);
+      minY = yValues[0];
+      maxY = yValues[yValues.length - 1];
+    }
+  }
+
+  return {
+    minZoom: zoomDirs[0],
+    maxZoom: zoomDirs[zoomDirs.length - 1],
+    centerZoom: midZoom,
+    minX,
+    maxX,
+    minY,
+    maxY,
+  };
+}
+
+let tileMeta = buildTileMeta();
+
+function resolveFileUrl(urlPath) {
+  const requestPath = urlPath === '/' ? '/index.html' : urlPath;
+  const normalizedPath = normalize(requestPath).replace(/^\\+/, '').replace(/^\/+/, '');
+
+  if (normalizedPath.includes('..')) {
+    return null;
+  }
+
+  const fileUrl = new URL(`./src/${normalizedPath}`, import.meta.url);
+
+  // If the path has no extension and the file doesn't exist, try appending .html
+  if (!extname(normalizedPath) && !existsSync(fileUrl)) {
+    return new URL(`./src/${normalizedPath}.html`, import.meta.url);
+  }
+
+  return fileUrl;
+}
+
+// Track multiple players: Map<clientId, {telemetry, lastPacketAt}>
+const state = {
+  players: new Map(),
+  packetCount: 0,
+  serverStartTime: Date.now(),
+};
+
+function isZeroLikeTelemetry(telemetry) {
+  if (!telemetry) {
+    return true;
+  }
+
+  const speedMs = Number(telemetry.speedMs ?? 0);
+  const rpm = Number(telemetry.currentEngineRpm ?? 0);
+  return speedMs === 0 && rpm === 0;
+}
+
+function getClientId(remote) {
+  return `${remote.address}:${remote.port}`;
+}
+
+// Map internal client address:port -> opaque public id to avoid exposing IPs
+const publicIdMap = new Map();
+let nextPublicId = 1;
+function getPublicId(internalId) {
+  if (publicIdMap.has(internalId)) return publicIdMap.get(internalId);
+  const id = `c${nextPublicId++}`;
+  publicIdMap.set(internalId, id);
+  return id;
+}
+
+function buildPayload() {
+  const now = Date.now();
+  const players = [];
+
+  // Build active players list
+  for (const [clientId, playerData] of state.players) {
+    const connected = now - playerData.lastPacketAt <= CONNECTION_TIMEOUT_MS;
+    if (connected) {
+      const publicId = getPublicId(clientId);
+      players.push({
+        clientId: publicId,
+        telemetry: playerData.telemetry,
+        lastPacketAt: playerData.lastPacketAt,
+      });
+    }
+  }
+
+  return {
+    players,
+    playerCount: players.length,
+    packetCount: state.packetCount,
+    serverTime: now,
+    serverUptime: now - state.serverStartTime,
+    udpPort: UDP_PORT,
+  };
+}
+
+function broadcastPayload() {
+  const payload = JSON.stringify(buildPayload());
+
+  for (const client of clients) {
+    if (client.readyState === WebSocket.OPEN) {
+      client.send(payload);
+    }
+  }
+}
+
+const clients = new Set();
+
+const udpServer = dgram.createSocket('udp4');
+
+udpServer.on('message', (message, remote) => {
+  const now = Date.now();
+  const clientId = getClientId(remote);
+  state.packetCount += 1;
+
+  try {
+    const decodedTelemetry = readTelemetryPacket(message);
+
+    // FH can emit all-zero packets while paused/loading. Keep the last valid snapshot.
+    if (!isZeroLikeTelemetry(decodedTelemetry)) {
+      state.players.set(clientId, {
+        telemetry: decodedTelemetry,
+        lastPacketAt: now,
+      });
+    } else {
+      // Update lastPacketAt even for zero-like packets to keep connection alive
+      const existing = state.players.get(clientId);
+      if (existing) {
+        existing.lastPacketAt = now;
+      }
+    }
+  } catch (error) {
+    // Keep the previous valid telemetry when a packet cannot be decoded.
+    const existing = state.players.get(clientId);
+    if (existing) {
+      existing.lastPacketAt = now;
+    }
+  }
+
+  broadcastPayload();
+});
+
+udpServer.on('error', (error) => {
+  console.error('UDP server error:', error);
+});
+
+udpServer.bind(UDP_PORT, HOST, () => {
+  const displayHost = HOST === '0.0.0.0' ? '127.0.0.1' : HOST;
+
+  log(`Listening for FH6 telemetry on udp://${HOST}:${UDP_PORT}`);
+  log(`Web interface: http://localhost:${PORT}`);
+  log('Forza settings -> HUD & Gameplay -> Telemetry:');
+  log('  • Enable "Data Out"');
+  log(`  • Data Out IP Address: ${displayHost}`);
+  log(`  • Data Out Port: ${UDP_PORT}`);
+});
+
+const wss = new WebSocketServer({ noServer: true });
+
+const server = http.createServer((request, response) => {
+  if (request.url === '/tiles-meta') {
+    response.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': settings.server.cacheControl,
+    });
+    response.end(JSON.stringify(tileMeta));
+    return;
+  }
+
+  if (request.url === '/live-data') {
+    response.writeHead(200, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': settings.server.cacheControl,
+    });
+    response.end(JSON.stringify(buildPayload()));
+    return;
+  }
+
+  const fileUrl = resolveFileUrl(request.url || '/');
+
+  if (!fileUrl || !existsSync(fileUrl)) {
+    response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end('Not found');
+    return;
+  }
+
+  try {
+    const extension = extname(fileUrl.pathname).toLowerCase();
+    const contentType = MIME_TYPES[extension] || 'application/octet-stream';
+    const content = readFileSync(fileUrl);
+
+    response.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': settings.server.cacheControl });
+    response.end(content);
+  } catch (error) {
+    response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+    response.end('Server error');
+  }
+});
+
+server.on('upgrade', (request, socket, head) => {
+  if (request.url !== '/ws') {
+    socket.destroy();
+    return;
+  }
+
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit('connection', ws, request);
+  });
+});
+
+wss.on('connection', (ws) => {
+  clients.add(ws);
+  ws.send(JSON.stringify(buildPayload()));
+
+  ws.on('close', () => {
+    clients.delete(ws);
+  });
+});
+
+server.listen(PORT, HOST, () => {
+  log(`FH6 Live Map Server running on http://${HOST}:${PORT}`);
+});
