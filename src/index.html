@@ -143,124 +143,29 @@
         background: #ef4444;
       }
 
-      .players-panel {
-        position: absolute;
-        top: 60px;
-        right: 12px;
-        width: 280px;
-        background: rgba(15, 23, 42, 0.92);
-        border: 1px solid rgba(148, 163, 184, 0.2);
-        border-radius: 8px;
-        box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-        max-height: calc(100vh - 100px);
-        overflow-y: auto;
-        z-index: 400;
-      }
-
-      .players-panel__header {
-        padding: 12px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.15);
-        font-size: 12px;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
+      .follow-toggle {
+        appearance: none;
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        background: rgba(15, 23, 42, 0.7);
         color: #cbd5e1;
-      }
-
-      .players-list {
-        max-height: calc(100vh - 160px);
-        overflow-y: auto;
-      }
-
-      .player-item {
-        padding: 10px 12px;
-        border-bottom: 1px solid rgba(148, 163, 184, 0.1);
-        cursor: pointer;
-        transition: background 0.15s;
-      }
-
-      .player-item:hover {
-        background: rgba(59, 130, 246, 0.1);
-      }
-
-      .player-item.active {
-        background: rgba(59, 130, 246, 0.2);
-        border-left: 3px solid #3b82f6;
-        padding-left: 9px;
-      }
-
-      .player-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        margin-bottom: 4px;
-      }
-
-      .player-name {
-        font-size: 12px;
-        font-weight: 600;
-        color: #f1f5f9;
-      }
-
-      .player-speed {
+        border-radius: 999px;
+        padding: 6px 10px;
         font-size: 11px;
-        color: #fbbf24;
-        font-weight: 600;
+        font-weight: 700;
+        letter-spacing: 0.03em;
+        text-transform: none;
+        cursor: pointer;
+        transition: background 0.15s, color 0.15s, border-color 0.15s;
       }
 
-      .player-details {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 6px;
-        font-size: 10px;
-        margin-top: 4px;
+      .follow-toggle:hover {
+        background: rgba(148, 163, 184, 0.14);
       }
 
-      .detail-row {
-        display: flex;
-        justify-content: space-between;
-        color: #cbd5e1;
-      }
-
-      .detail-label {
-        color: #94a3b8;
-      }
-
-      .empty-state {
-        padding: 24px 12px;
-        text-align: center;
-        color: #94a3b8;
-        font-size: 12px;
-      }
-
-      /* Scrollbar styling */
-      .players-panel::-webkit-scrollbar,
-      .players-list::-webkit-scrollbar {
-        width: 6px;
-      }
-
-      .players-panel::-webkit-scrollbar-track,
-      .players-list::-webkit-scrollbar-track {
-        background: rgba(148, 163, 184, 0.1);
-        border-radius: 3px;
-      }
-
-      .players-panel::-webkit-scrollbar-thumb,
-      .players-list::-webkit-scrollbar-thumb {
-        background: rgba(148, 163, 184, 0.3);
-        border-radius: 3px;
-      }
-
-      .players-panel::-webkit-scrollbar-thumb:hover,
-      .players-list::-webkit-scrollbar-thumb:hover {
-        background: rgba(148, 163, 184, 0.5);
-      }
-
-      .loading {
-        color: #94a3b8;
-        text-align: center;
-        padding: 12px;
-        font-size: 12px;
+      .follow-toggle.active {
+        background: #fbbf24;
+        border-color: #fbbf24;
+        color: #0f172a;
       }
 
       @media (max-width: 768px) {
@@ -282,15 +187,6 @@
           font-size: 13px;
         }
 
-        .players-panel {
-          width: 240px;
-          top: 50px;
-          right: 8px;
-        }
-
-        .player-details {
-          grid-template-columns: 1fr;
-        }
       }
     </style>
   </head>
@@ -309,6 +205,7 @@
           <button type="button" class="unit-toggle__button active" data-speed-unit="mph" aria-pressed="true">MPH</button>
           <button type="button" class="unit-toggle__button" data-speed-unit="km" aria-pressed="false">KM/H</button>
         </div>
+        <button type="button" id="followPlayerToggle" class="follow-toggle active" aria-pressed="true">Follow selected</button>
       </div>
     </div>
 

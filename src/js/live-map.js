@@ -4,6 +4,7 @@ let mapController = null;
 let ws = null;
 let wsReconnectTimer = null;
 let activePlayer = null;
+let followActivePlayer = true;
 let latestCalibration = null;
 let speedUnit = 'mph';
 const playerMarkers = new Map();
@@ -84,6 +85,16 @@ function updateSpeedUnitToggle() {
   }
 }
 
+function updateFollowToggle() {
+  const button = document.getElementById('followPlayerToggle');
+
+  if (!button) return;
+
+  button.classList.toggle('active', followActivePlayer);
+  button.setAttribute('aria-pressed', String(followActivePlayer));
+  button.textContent = followActivePlayer ? 'Follow selected' : 'Follow off';
+}
+
 function setSpeedUnit(nextUnit) {
   const normalized = normalizeSpeedUnit(nextUnit);
   speedUnit = normalized;
@@ -93,7 +104,46 @@ function setSpeedUnit(nextUnit) {
   }
 
   updateSpeedUnitToggle();
-  updatePlayersList(Array.from(playerData.values()), latestCalibration);
+}
+
+function getPlayerLatLng(clientId, calibration) {
+  const player = playerData.get(clientId);
+  if (!player?.telemetry) return null;
+
+  const tel = player.telemetry;
+  const worldX = Number(tel.positionX ?? 0);
+  const worldZ = Number(tel.positionZ ?? 0);
+
+  if ((worldX === 0 && worldZ === 0) || !Number.isFinite(worldX) || !Number.isFinite(worldZ)) return null;
+
+  return worldToLatLng(worldX, worldZ, calibration);
+}
+
+function focusOnPlayer(clientId, calibration, { animate = false } = {}) {
+  if (!mapController?.map) return false;
+
+  const latLng = getPlayerLatLng(clientId, calibration);
+  if (!latLng) return false;
+
+  mapController.map.setView(latLng, mapController.map.getZoom(), { animate });
+  return true;
+}
+
+function setActivePlayer(clientId) {
+  activePlayer = clientId;
+
+  if (followActivePlayer && activePlayer) {
+    focusOnPlayer(activePlayer, latestCalibration);
+  }
+}
+
+function setFollowActivePlayer(nextFollow) {
+  followActivePlayer = Boolean(nextFollow);
+  updateFollowToggle();
+
+  if (followActivePlayer && activePlayer) {
+    focusOnPlayer(activePlayer, latestCalibration);
+  }
 }
 
 function worldToLatLng(worldX, worldZ, calibration) {
@@ -107,50 +157,6 @@ function worldToLatLng(worldX, worldZ, calibration) {
   }
 
   return mapController.map.unproject(mapController.L.point(point.x, point.y), mapController.map.getMaxZoom());
-}
-
-function renderPlayersList(players) {
-  const listEl = document.getElementById('playersList');
-
-  const playersHtml = players
-    .map((player) => {
-      const tel = player.telemetry || {};
-      const isActive = activePlayer === player.clientId;
-      const speedValue = getSpeedValue(tel);
-      const className = `player-item${isActive ? ' active' : ''}`;
-
-      return `
-        <div class="${className}">
-          <div class="player-header">
-            <span class="player-name">${tel.carName || 'Unknown Car'}</span>
-            <span class="player-speed">${speedValue} ${getSpeedLabel()}</span>
-          </div>
-          <div class="player-details">
-            <div class="detail-row">
-              <span class="detail-label">Class:</span>
-              <span>${tel.carClassLabel || 'N/A'}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">Gear:</span>
-              <span>${tel.gearLabel || 'N/A'}</span>
-            </div>
-            <div class="detail-row">
-              <span class="detail-label">RPM:</span>
-              <span>${Math.round(Number(tel.currentEngineRpm ?? 0)).toLocaleString()}</span>
-            </div>
-          </div>
-        </div>
-      `;
-    })
-    .join('');
-
-  if (listEl) {
-    try {
-      listEl.innerHTML = playersHtml;
-    } catch (e) {
-      console.warn('Failed to render players list:', e);
-    }
-  }
 }
 
 function updatePlayerMarker(clientId, telemetry, calibration) {
@@ -174,9 +180,16 @@ function updatePlayerMarker(clientId, telemetry, calibration) {
     marker = mapController.L.marker(latLng, {
       icon: buildPlayerIcon(headingDeg, color),
       title: telemetry.carName || 'Player',
+      interactive: true,
     }).addTo(mapController.map);
 
     marker.bindPopup(popupHtml, { maxWidth: 320 });
+    marker.on('click', () => {
+      setFollowActivePlayer(true);
+      setActivePlayer(clientId);
+      marker.openPopup();
+      focusOnPlayer(clientId, latestCalibration || calibration, { animate: true });
+    });
 
     playerMarkers.set(clientId, marker);
   } else {
@@ -209,16 +222,20 @@ function updatePlayerMarker(clientId, telemetry, calibration) {
 function buildPopupHtml({ clientId, telemetry }) {
   const tel = telemetry || {};
   const speedValue = getSpeedValue(tel);
+  const classText = tel.carClassLabel || 'N/A';
+  const performanceIndex = Number.isFinite(Number(tel.carPerformanceIndex))
+    ? Number(tel.carPerformanceIndex)
+    : 'N/A';
   return `
     <div style="font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #111;">
       <div style="font-weight:700; font-size:16px; margin-bottom:6px;">${tel.carName || 'Unknown Car'}</div>
       <div style="font-size:14px;"><strong>Speed:</strong> ${speedValue} ${getSpeedLabel()}</div>
+      <div style="font-size:14px;"><strong>Class:</strong> ${classText} | ${performanceIndex}</div>
     </div>
   `;
 }
 function updatePlayersList(players, calibration) {
   latestCalibration = calibration;
-  const listEl = document.getElementById('playersList');
 
   if (players.length === 0) {
     // Remove any stale markers even if the panel is hidden
@@ -228,7 +245,7 @@ function updatePlayersList(players, calibration) {
       playerData.delete(clientId);
     }
 
-    if (listEl) listEl.innerHTML = '<div class="empty-state">No active players</div>';
+    activePlayer = null;
     return;
   }
 
@@ -258,7 +275,17 @@ function updatePlayersList(players, calibration) {
     }
   }
 
-  renderPlayersList(players);
+  if (activePlayer && !activePlayerIds.has(activePlayer)) {
+    activePlayer = null;
+  }
+
+  if (followActivePlayer && !activePlayer && players.length === 1) {
+    activePlayer = players[0].clientId;
+  }
+
+  if (followActivePlayer && activePlayer) {
+    focusOnPlayer(activePlayer, calibration);
+  }
 }
 
 function connectWebSocket() {
@@ -356,6 +383,14 @@ async function start() {
 
     speedUnit = normalizeSpeedUnit(mapController.getSpeedUnit?.());
     updateSpeedUnitToggle();
+    updateFollowToggle();
+
+    const followButton = document.getElementById('followPlayerToggle');
+    if (followButton) {
+      followButton.addEventListener('click', () => {
+        setFollowActivePlayer(!followActivePlayer);
+      });
+    }
 
     console.log('Map initialized');
     connectWebSocket();
@@ -366,8 +401,8 @@ async function start() {
 
 // Global function for player selection
 window.selectPlayer = (clientId) => {
-  activePlayer = activePlayer === clientId ? null : clientId;
-  renderPlayersList(Array.from(playerData.values()));
+  setFollowActivePlayer(true);
+  setActivePlayer(clientId);
 };
 
 document.querySelectorAll('[data-speed-unit]').forEach((button) => {
