@@ -16,11 +16,11 @@ const WS_URL = (() => {
   return `${protocol}//${window.location.host}/ws`;
 })();
 
-function getColorForPlayer(clientId) {
-  // Generate consistent color for each player based on clientId
+function getColorForPlayer(playerIdentity) {
+  // Generate consistent color for each player based on their visible identity.
   let hash = 0;
-  for (let i = 0; i < clientId.length; i++) {
-    const char = clientId.charCodeAt(i);
+  for (let i = 0; i < playerIdentity.length; i++) {
+    const char = playerIdentity.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
     hash = hash & hash; // Convert to 32bit integer
   }
@@ -159,8 +159,10 @@ function worldToLatLng(worldX, worldZ, calibration) {
   return mapController.map.unproject(mapController.L.point(point.x, point.y), mapController.map.getMaxZoom());
 }
 
-function updatePlayerMarker(clientId, telemetry, calibration) {
+function updatePlayerMarker(clientId, telemetry, calibration, markerColor = null) {
   if (!mapController || !calibration) return;
+  const player = playerData.get(clientId) || {};
+  const playerName = player.username || clientId;
 
   const worldX = Number(telemetry.positionX ?? 0);
   const worldZ = Number(telemetry.positionZ ?? 0);
@@ -171,15 +173,15 @@ function updatePlayerMarker(clientId, telemetry, calibration) {
   if (!latLng) return;
 
   const headingDeg = ((Number(telemetry.yaw || 0) * 180) / Math.PI) % 360;
-  const color = getColorForPlayer(clientId);
-  const popupHtml = buildPopupHtml({ clientId, telemetry });
+  const color = markerColor || getColorForPlayer(playerName);
+  const popupHtml = buildPopupHtml({ clientId, playerName, telemetry });
 
   let marker = playerMarkers.get(clientId);
 
   if (!marker) {
     marker = mapController.L.marker(latLng, {
       icon: buildPlayerIcon(headingDeg, color),
-      title: telemetry.carName || 'Player',
+      title: `${playerName} - ${telemetry.carName || 'Player'}`,
       interactive: true,
     }).addTo(mapController.map);
 
@@ -219,7 +221,7 @@ function updatePlayerMarker(clientId, telemetry, calibration) {
 }
 
 
-function buildPopupHtml({ clientId, telemetry }) {
+function buildPopupHtml({ playerName, telemetry }) {
   const tel = telemetry || {};
   const speedValue = getSpeedValue(tel);
   const classText = tel.carClassLabel || 'N/A';
@@ -228,6 +230,7 @@ function buildPopupHtml({ clientId, telemetry }) {
     : 'N/A';
   return `
     <div style="font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #111;">
+      <div style="font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#666; margin-bottom:4px;">${playerName || 'Anonymous'}</div>
       <div style="font-weight:700; font-size:16px; margin-bottom:6px;">${tel.carName || 'Unknown Car'}</div>
       <div style="font-size:14px;"><strong>Speed:</strong> ${speedValue} ${getSpeedLabel()}</div>
       <div style="font-size:14px;"><strong>Class:</strong> ${classText} | ${performanceIndex}</div>
@@ -262,7 +265,7 @@ function updatePlayersList(players, calibration) {
 
     // Update marker on map
     if (player.telemetry) {
-      updatePlayerMarker(player.clientId, player.telemetry, calibration);
+      updatePlayerMarker(player.clientId, player.telemetry, calibration, player.markerColor);
     }
   }
 
