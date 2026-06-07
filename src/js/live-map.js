@@ -176,16 +176,32 @@ function updatePlayerMarker(clientId, telemetry, calibration) {
       title: telemetry.carName || 'Player',
     }).addTo(mapController.map);
 
-    // Bind once — Leaflet handles click-to-open automatically
     marker.bindPopup(popupHtml, { maxWidth: 320 });
 
     playerMarkers.set(clientId, marker);
   } else {
     marker.setLatLng(latLng);
-    marker.setIcon(buildPlayerIcon(headingDeg, color));
 
-    // Update content whether popup is open or closed
-    marker.getPopup()?.setContent(popupHtml);
+    // Only update the icon's rotation via the SVG directly — avoid setIcon()
+    // because it recreates the DOM element and can break popup click listeners.
+    const iconEl = marker.getElement?.();
+    if (iconEl) {
+      const path = iconEl.querySelector('path');
+      if (path) {
+        path.setAttribute('transform', `rotate(${headingDeg} 12 12)`);
+      }
+    } else {
+      // Fallback: element not yet in DOM, safe to replace icon
+      marker.setIcon(buildPlayerIcon(headingDeg, color));
+    }
+
+    // Always ensure popup exists and has fresh content
+    const popup = marker.getPopup();
+    if (popup) {
+      popup.setContent(popupHtml);
+    } else {
+      marker.bindPopup(popupHtml, { maxWidth: 320 });
+    }
   }
 }
 
