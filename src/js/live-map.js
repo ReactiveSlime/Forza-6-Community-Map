@@ -1,10 +1,27 @@
-import { buildCalibrationTransform } from "./calibration.js";
+import {
+  buildCalibrationTransform,
+  DEFAULT_CALIBRATION,
+} from "./calibration.js";
 import {
   buildPlayerIcon,
   buildPopupHtml,
   getColorForPlayer,
 } from "./markers.js";
 import { initMap } from "./map.js";
+
+let MAX_TRAIL_POINTS = (() => {
+  const p = new URLSearchParams(window.location.search).get("trail");
+  if (p) {
+    const n = parseInt(p, 10);
+    if (n > 0) return n;
+  }
+  const s = localStorage.getItem("maxTrailPoints");
+  if (s) {
+    const n = parseInt(s, 10);
+    if (n > 0) return n;
+  }
+  return 1000;
+})();
 
 let mapController = null;
 let ws = null;
@@ -13,8 +30,10 @@ let activePlayer = null;
 let following = false;
 let latestCalibration = null;
 let speedUnit = "mph";
+let showLabels = false;
 const playerMarkers = new Map();
 const playerData = new Map();
+const playerTrails = new Map();
 
 const RECONNECT_DELAY = 3000;
 const WS_URL = (() => {
@@ -36,6 +55,30 @@ function getSpeedValue(telemetry) {
   }
 
   return Math.round(Number(telemetry.speedMph ?? 0));
+}
+
+function updateLabelsToggle() {
+  const btn = document.getElementById("labelsBtn");
+  if (btn) {
+    btn.classList.toggle("active", showLabels);
+    btn.setAttribute("aria-pressed", String(showLabels));
+  }
+}
+
+function setLabelsVisibility(visible) {
+  showLabels = visible;
+  for (const [, marker] of playerMarkers) {
+    if (visible) {
+      marker.bindTooltip(marker._playerName || "", {
+        permanent: true,
+        direction: "top",
+        className: "player-label",
+      });
+    } else {
+      marker.unbindTooltip();
+    }
+  }
+  updateLabelsToggle();
 }
 
 function updateSpeedUnitToggle() {
@@ -92,14 +135,6 @@ function focusOnPlayer(clientId, calibration, { animate = false } = {}) {
   return true;
 }
 
-function setActivePlayer(clientId) {
-  activePlayer = clientId;
-
-  if (activePlayer) {
-    focusOnPlayer(activePlayer, latestCalibration);
-  }
-}
-
 function worldToLatLng(worldX, worldZ, calibration) {
   if (!calibration || !mapController?.map || !mapController?.L) {
     return null;
@@ -148,6 +183,31 @@ function updatePlayerMarker(
     speedLabel: getSpeedLabel(),
   });
 
+  if (clientId === activePlayer) {
+    const player = playerData.get(clientId);
+    const prevLatLng = playerMarkers.get(clientId)?.getLatLng();
+    if (prevLatLng && prevLatLng.distanceTo(latLng) > 1) {
+      let trail = playerTrails.get(clientId);
+      if (!trail) {
+        trail = { points: [], polyline: null };
+        playerTrails.set(clientId, trail);
+      }
+      trail.points.push(latLng);
+      if (trail.points.length > MAX_TRAIL_POINTS) trail.points.shift();
+      if (trail.polyline) {
+        trail.polyline.setLatLngs(trail.points);
+      } else if (trail.points.length > 1) {
+        const marker = playerMarkers.get(clientId);
+        trail.polyline = mapController.L.polyline(trail.points, {
+          color: marker?._color || "#fbbf24",
+          opacity: 0.8,
+          weight: 6,
+          smoothFactor: 1,
+        }).addTo(mapController.map);
+      }
+    }
+  }
+
   let marker = playerMarkers.get(clientId);
 
   if (!marker) {
@@ -156,6 +216,15 @@ function updatePlayerMarker(
       title: `${playerName} - ${telemetry.carName || "Player"}`,
       interactive: true,
     }).addTo(mapController.map);
+
+    marker._playerName = playerName;
+    if (showLabels) {
+      marker.bindTooltip(playerName, {
+        permanent: true,
+        direction: "top",
+        className: "player-label",
+      });
+    }
 
     marker.bindPopup(popupHtml, { maxWidth: 320 });
     marker.on("click", () => {
@@ -169,6 +238,7 @@ function updatePlayerMarker(
 
     playerMarkers.set(clientId, marker);
   } else {
+    marker._color = color;
     marker.setLatLng(latLng);
 
     // Only update the icon's rotation via the SVG directly — avoid setIcon()
@@ -184,7 +254,18 @@ function updatePlayerMarker(
       marker.setIcon(buildPlayerIcon(mapController.L, headingDeg, color));
     }
 
-    // Always ensure popup exists and has fresh content
+    marker._playerName = playerName;
+    if (showLabels) {
+      const tip = marker.getTooltip();
+      if (tip) tip.setContent(playerName);
+      else
+        marker.bindTooltip(playerName, {
+          permanent: true,
+          direction: "top",
+          className: "player-label",
+        });
+    }
+
     const popup = marker.getPopup();
     if (popup) {
       popup.setContent(popupHtml);
@@ -198,12 +279,15 @@ function updatePlayersList(players, calibration) {
   latestCalibration = calibration;
 
   if (players.length === 0) {
-    // Remove any stale markers even if the panel is hidden
     for (const [clientId, marker] of playerMarkers.entries()) {
       mapController.map.removeLayer(marker);
       playerMarkers.delete(clientId);
       playerData.delete(clientId);
     }
+    for (const [, trail] of playerTrails) {
+      if (trail.polyline) trail.polyline.remove();
+    }
+    playerTrails.clear();
 
     activePlayer = null;
     return;
@@ -212,7 +296,6 @@ function updatePlayersList(players, calibration) {
   const now = Date.now();
   const activePlayerIds = new Set();
 
-  // Update player data
   for (const player of players) {
     activePlayerIds.add(player.clientId);
     playerData.set(player.clientId, {
@@ -220,7 +303,6 @@ function updatePlayersList(players, calibration) {
       lastUpdate: now,
     });
 
-    // Update marker on map
     if (player.telemetry) {
       updatePlayerMarker(
         player.clientId,
@@ -231,12 +313,14 @@ function updatePlayersList(players, calibration) {
     }
   }
 
-  // Remove stale markers
   for (const [clientId, marker] of playerMarkers.entries()) {
     if (!activePlayerIds.has(clientId)) {
       mapController.map.removeLayer(marker);
       playerMarkers.delete(clientId);
       playerData.delete(clientId);
+      const trail = playerTrails.get(clientId);
+      if (trail?.polyline) trail.polyline.remove();
+      playerTrails.delete(clientId);
     }
   }
 
@@ -280,6 +364,61 @@ function updatePlayerDropdown() {
   list.innerHTML = html;
 }
 
+function updatePlayerTrail(clientId, latLng, color) {
+  if (!mapController) return;
+  let trail = playerTrails.get(clientId);
+  if (!trail) {
+    trail = { points: [], polyline: null };
+    playerTrails.set(clientId, trail);
+  }
+  trail.points.push(latLng);
+  if (trail.points.length > MAX_TRAIL_POINTS) trail.points.shift();
+
+  if (clientId === activePlayer) {
+    if (trail.polyline) {
+      trail.polyline.setLatLngs(trail.points);
+    } else {
+      trail.polyline = mapController.L.polyline(trail.points, {
+        color,
+        opacity: 0.8,
+        weight: 6,
+        smoothFactor: 1,
+      }).addTo(mapController.map);
+    }
+  }
+}
+
+function setActivePlayer(clientId) {
+  if (activePlayer && activePlayer !== clientId) {
+    const prev = playerTrails.get(activePlayer);
+    if (prev?.polyline) {
+      prev.polyline.remove();
+      prev.polyline = null;
+    }
+  }
+
+  activePlayer = clientId;
+
+  if (activePlayer) {
+    const trail = playerTrails.get(activePlayer);
+    if (trail?.points.length > 1) {
+      if (trail.polyline) {
+        trail.polyline.addTo(mapController.map);
+      } else {
+        const marker = playerMarkers.get(activePlayer);
+        const color = marker?._color || "#fbbf24";
+        trail.polyline = mapController.L.polyline(trail.points, {
+          color,
+          opacity: 0.8,
+          weight: 6,
+          smoothFactor: 1,
+        }).addTo(mapController.map);
+      }
+    }
+    focusOnPlayer(activePlayer, latestCalibration);
+  }
+}
+
 function connectWebSocket() {
   try {
     ws = new WebSocket(WS_URL);
@@ -302,14 +441,7 @@ function connectWebSocket() {
         // Get calibration from map
         const calibration = mapController?.getCalibration?.()
           ? buildCalibrationTransform(mapController.getCalibration())
-          : buildCalibrationTransform({
-              calAWorld: [-921.8101806640625, -8571.4697265625],
-              calAPix: [2089190, 2092051],
-              calBWorld: [-7104.76953125, -1863.080322265625],
-              calBPix: [2086888, 2089556],
-              calCWorld: [5486.39013671875, 907.9600219726562],
-              calCPix: [2091573, 2088525],
-            });
+          : buildCalibrationTransform(DEFAULT_CALIBRATION);
 
         if (payload.players && Array.isArray(payload.players)) {
           updatePlayersList(payload.players, calibration);
@@ -377,14 +509,48 @@ async function start() {
     updateSpeedUnitToggle();
 
     mapController.map.on("click", () => {
+      if (activePlayer) {
+        const prev = playerTrails.get(activePlayer);
+        if (prev?.polyline) {
+          prev.polyline.remove();
+          prev.polyline = null;
+        }
+      }
       following = false;
       activePlayer = null;
     });
 
     mapController.map.on("dragstart", () => {
+      if (activePlayer) {
+        const prev = playerTrails.get(activePlayer);
+        if (prev?.polyline) {
+          prev.polyline.remove();
+          prev.polyline = null;
+        }
+      }
       following = false;
       activePlayer = null;
     });
+
+    document.getElementById("labelsBtn")?.addEventListener("click", () => {
+      setLabelsVisibility(!showLabels);
+    });
+
+    const trailInput = document.getElementById("trailPoints");
+    if (trailInput) {
+      trailInput.value = String(MAX_TRAIL_POINTS);
+      trailInput.addEventListener("change", () => {
+        const n = parseInt(trailInput.value, 10);
+        if (n > 0) {
+          MAX_TRAIL_POINTS = n;
+          localStorage.setItem("maxTrailPoints", String(n));
+          for (const [, trail] of playerTrails) {
+            if (trail.polyline) trail.polyline.remove();
+          }
+          playerTrails.clear();
+        }
+      });
+    }
 
     const playerBtn = document.getElementById("playerListBtn");
     const playerList = document.getElementById("playerDropdownList");
@@ -398,6 +564,32 @@ async function start() {
       playerBtn.classList.remove("open");
     });
     playerList.addEventListener("click", (e) => e.stopPropagation());
+
+    const modal = document.getElementById("connectionModal");
+    const infoBtn = document.getElementById("connectionInfoBtn");
+    const closeBtn = document.getElementById("modalClose");
+    infoBtn.addEventListener("click", () => {
+      modal.style.display = "";
+    });
+    closeBtn.addEventListener("click", () => {
+      modal.style.display = "none";
+    });
+    modal.addEventListener("click", (e) => {
+      if (e.target === modal) modal.style.display = "none";
+    });
+
+    const settingsBtn = document.getElementById("settingsBtn");
+    const settingsList = document.getElementById("settingsList");
+    settingsBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      settingsList.classList.toggle("open");
+      settingsBtn.classList.toggle("open");
+    });
+    settingsList.addEventListener("click", (e) => e.stopPropagation());
+    document.addEventListener("click", () => {
+      settingsList.classList.remove("open");
+      settingsBtn.classList.remove("open");
+    });
 
     console.log("Map initialized");
     connectWebSocket();

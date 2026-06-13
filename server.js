@@ -1,11 +1,18 @@
-import dgram from 'node:dgram';
-import http from 'node:http';
-import { randomUUID } from 'node:crypto';
-import { readFileSync, existsSync, readdirSync, mkdirSync } from 'node:fs';
-import { dirname as pathDirname, extname, normalize, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { WebSocket, WebSocketServer } from 'ws';
-import { readTelemetryPacket } from './telemetry.js';
+import dgram from "node:dgram";
+import http from "node:http";
+import { randomUUID } from "node:crypto";
+import { readFileSync, existsSync, readdirSync, mkdirSync } from "node:fs";
+import {
+  dirname as pathDirname,
+  extname,
+  normalize,
+  dirname,
+  join,
+} from "node:path";
+import { fileURLToPath } from "node:url";
+import { WebSocket, WebSocketServer } from "ws";
+import { readTelemetryPacket } from "./telemetry.js";
+import { initDb } from "./db.js";
 
 // Load settings from settings.json with environment variable overrides
 function loadSettings() {
@@ -14,27 +21,36 @@ function loadSettings() {
   const settingsPath = `${__dirname}/settings.json`;
 
   let settings = {
-    server: { port: 3001, host: '0.0.0.0', cacheControl: 'no-store' },
-    telemetry: { udpPort: 20441, connectionTimeoutMs: 2000, broadcastIntervalMs: 250 },
-    logging: { enabled: true, level: 'info' },
+    server: { port: 3001, host: "0.0.0.0", cacheControl: "no-store" },
+    telemetry: {
+      udpPort: 20441,
+      connectionTimeoutMs: 2000,
+      broadcastIntervalMs: 250,
+    },
+    logging: { enabled: true, level: "info" },
     tiles: { autoDetect: true },
   };
 
   if (existsSync(settingsPath)) {
     try {
-      const fileContent = readFileSync(settingsPath, 'utf-8');
+      const fileContent = readFileSync(settingsPath, "utf-8");
       const loaded = JSON.parse(fileContent);
       settings = { ...settings, ...loaded };
     } catch (error) {
-      console.warn(`Warning: Could not load settings.json (${error.message}). Using defaults.`);
+      console.warn(`Could not load settings.json: ${error.message}`);
     }
   }
 
   // Environment variables override file settings
-  if (process.env.HTTP_PORT) settings.server.port = Number(process.env.HTTP_PORT);
-  if (process.env.UDP_PORT) settings.telemetry.udpPort = Number(process.env.UDP_PORT);
+  if (process.env.HTTP_PORT)
+    settings.server.port = Number(process.env.HTTP_PORT);
+  if (process.env.UDP_PORT)
+    settings.telemetry.udpPort = Number(process.env.UDP_PORT);
   if (process.env.HOST) settings.server.host = process.env.HOST;
-  if (process.env.CONNECTION_TIMEOUT_MS) settings.telemetry.connectionTimeoutMs = Number(process.env.CONNECTION_TIMEOUT_MS);
+  if (process.env.CONNECTION_TIMEOUT_MS)
+    settings.telemetry.connectionTimeoutMs = Number(
+      process.env.CONNECTION_TIMEOUT_MS,
+    );
 
   return settings;
 }
@@ -45,16 +61,22 @@ const UDP_PORT = settings.telemetry.udpPort;
 const HOST = settings.server.host;
 const CONNECTION_TIMEOUT_MS = settings.telemetry.connectionTimeoutMs;
 
+const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "data");
+if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+const db = initDb(join(DATA_DIR, "positions.db"));
+
+let recordCounter = 0;
+
 const MIME_TYPES = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'application/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.png': 'image/png',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
+  ".html": "text/html; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
 };
 
 // Utility for logging with settings support
@@ -65,7 +87,7 @@ function log(...args) {
 }
 
 function buildTileMeta() {
-  const base = new URL('./src/static/maptiles', import.meta.url);
+  const base = new URL("./src/static/maptiles", import.meta.url);
   if (!existsSync(base)) {
     return {
       minZoom: 0,
@@ -111,10 +133,16 @@ function buildTileMeta() {
 
     const yValues = [];
     for (const x of xDirs) {
-      const yPath = new URL(`./src/static/maptiles/${midZoom}/${x}/`, import.meta.url);
+      const yPath = new URL(
+        `./src/static/maptiles/${midZoom}/${x}/`,
+        import.meta.url,
+      );
       const files = readdirSync(yPath, { withFileTypes: true })
-        .filter((entry) => entry.isFile() && /^\d+\.(jpg|jpeg|png|webp)$/i.test(entry.name))
-        .map((entry) => Number(entry.name.split('.')[0]));
+        .filter(
+          (entry) =>
+            entry.isFile() && /^\d+\.(jpg|jpeg|png|webp)$/i.test(entry.name),
+        )
+        .map((entry) => Number(entry.name.split(".")[0]));
       yValues.push(...files);
     }
 
@@ -139,10 +167,12 @@ function buildTileMeta() {
 let tileMeta = buildTileMeta();
 
 function resolveFileUrl(urlPath) {
-  const requestPath = urlPath === '/' ? '/index.html' : urlPath;
-  const normalizedPath = normalize(requestPath).replace(/^\\+/, '').replace(/^\/+/, '');
+  const requestPath = urlPath === "/" ? "/index.html" : urlPath;
+  const normalizedPath = normalize(requestPath)
+    .replace(/^\\+/, "")
+    .replace(/^\/+/, "");
 
-  if (normalizedPath.includes('..')) {
+  if (normalizedPath.includes("..")) {
     return null;
   }
 
@@ -156,6 +186,23 @@ function resolveFileUrl(urlPath) {
   return fileUrl;
 }
 
+const PPS_WINDOW = 5000;
+const packetTimes = [];
+
+function recordPacket() {
+  const now = Date.now();
+  state.packetCount += 1;
+  packetTimes.push(now);
+  const cutoff = now - PPS_WINDOW;
+  while (packetTimes.length > 0 && packetTimes[0] < cutoff) packetTimes.shift();
+}
+
+function packetsPerSecond() {
+  if (packetTimes.length < 2) return 0;
+  const elapsed = (packetTimes[packetTimes.length - 1] - packetTimes[0]) / 1000;
+  return elapsed > 0 ? Math.round((packetTimes.length / elapsed) * 10) / 10 : 0;
+}
+
 // Track multiple players: Map<clientId, {telemetry, lastPacketAt}>
 const state = {
   players: new Map(),
@@ -164,13 +211,10 @@ const state = {
 };
 
 function isZeroLikeTelemetry(telemetry) {
-  if (!telemetry) {
-    return true;
-  }
-
-  const speedMs = Number(telemetry.speedMs ?? 0);
-  const rpm = Number(telemetry.currentEngineRpm ?? 0);
-  return speedMs === 0 && rpm === 0;
+  if (!telemetry) return true;
+  return (
+    (telemetry.speedMs ?? 0) === 0 && (telemetry.currentEngineRpm ?? 0) === 0
+  );
 }
 
 function getClientId(remote) {
@@ -190,12 +234,32 @@ function getPublicId(internalId) {
 // Map internal client IDs to auto-generated usernames
 const autoGeneratedNames = new Map();
 let nextAutoUsername = 1;
-const nameAdjectives = ['Speedy', 'Quick', 'Swift', 'Bold', 'Brave', 'Daring', 'Racing', 'Pro', 'Elite'];
-const nameNouns = ['Racer', 'Driver', 'Pilot', 'Ace', 'Champion', 'Legend', 'Rider', 'Star'];
+const nameAdjectives = [
+  "Speedy",
+  "Quick",
+  "Swift",
+  "Bold",
+  "Brave",
+  "Daring",
+  "Racing",
+  "Pro",
+  "Elite",
+];
+const nameNouns = [
+  "Racer",
+  "Driver",
+  "Pilot",
+  "Ace",
+  "Champion",
+  "Legend",
+  "Rider",
+  "Star",
+];
 
 function generateAutoUsername(clientId) {
   if (autoGeneratedNames.has(clientId)) return autoGeneratedNames.get(clientId);
-  const adjective = nameAdjectives[Math.floor(Math.random() * nameAdjectives.length)];
+  const adjective =
+    nameAdjectives[Math.floor(Math.random() * nameAdjectives.length)];
   const noun = nameNouns[Math.floor(Math.random() * nameNouns.length)];
   const name = `${adjective}${noun}${nextAutoUsername++}`;
   autoGeneratedNames.set(clientId, name);
@@ -208,18 +272,23 @@ function getPlayerDisplayName(playerData, clientId) {
 
 function setPlayerUsername(clientId, username, markerColor, now) {
   const existing = state.players.get(clientId) || {};
-  const finalUsername = username?.trim() || existing.username || generateAutoUsername(clientId);
+  const finalUsername =
+    username?.trim() || existing.username || generateAutoUsername(clientId);
   state.players.set(clientId, {
     ...existing,
     lastPacketAt: now,
     username: finalUsername,
-    markerColor: (typeof markerColor === 'string' && markerColor.trim().startsWith('#')) ? markerColor.trim() : existing.markerColor || null,
+    markerColor:
+      typeof markerColor === "string" && markerColor.trim().startsWith("#")
+        ? markerColor.trim()
+        : existing.markerColor || null,
   });
 }
 
 function upsertPlayer(clientId, telemetry, now, username = null) {
   const existing = state.players.get(clientId) || {};
-  const finalUsername = username?.trim() || existing.username || generateAutoUsername(clientId);
+  const finalUsername =
+    username?.trim() || existing.username || generateAutoUsername(clientId);
   state.players.set(clientId, {
     ...existing,
     telemetry,
@@ -270,19 +339,22 @@ function broadcastPayload() {
 const clients = new Set();
 const ingestClients = new Map();
 
-const udpServer = dgram.createSocket('udp4');
+const udpServer = dgram.createSocket("udp4");
 
-udpServer.on('message', (message, remote) => {
+udpServer.on("message", (message, remote) => {
   const now = Date.now();
   const clientId = getClientId(remote);
-  state.packetCount += 1;
+  recordPacket();
 
-  const messageText = message.length <= 256 ? message.toString('utf8').trim() : '';
-  if (messageText.startsWith('{') && messageText.endsWith('}')) {
+  const messageText = message.toString("utf8").trim();
+  if (messageText.startsWith("{") && messageText.endsWith("}")) {
     try {
       const parsedMessage = JSON.parse(messageText);
 
-      if (parsedMessage?.type === 'hello' && typeof parsedMessage.username === 'string') {
+      if (
+        parsedMessage?.type === "hello" &&
+        typeof parsedMessage.username === "string"
+      ) {
         const username = parsedMessage.username.trim();
         const markerColor = parsedMessage.markerColor;
         const existing = state.players.get(clientId);
@@ -291,7 +363,9 @@ udpServer.on('message', (message, remote) => {
 
         const finalUsername = state.players.get(clientId)?.username;
         if (!existing?.username) {
-          console.info(`UDP client connected from ${remote.address}:${remote.port} as "${finalUsername}"${!username ? ' (auto-generated)' : ''}`);
+          console.info(
+            `UDP client connected from ${remote.address}:${remote.port} as "${finalUsername}"${!username ? " (auto-generated)" : ""}`,
+          );
         }
 
         broadcastPayload();
@@ -311,10 +385,24 @@ udpServer.on('message', (message, remote) => {
 
       if (!existing?.telemetry) {
         const username = existing?.username?.trim() || getPublicId(clientId);
-        console.info(`Telemetry streaming from ${remote.address}:${remote.port} for "${username}"`);
+        console.info(
+          `Telemetry streaming from ${remote.address}:${remote.port} for "${username}"`,
+        );
       }
 
       upsertPlayer(clientId, decodedTelemetry, now);
+
+      recordCounter++;
+      if (recordCounter % 2 === 0) {
+        const existing = state.players.get(clientId);
+        const name = getPlayerDisplayName(existing, clientId);
+        db.record(
+          name,
+          Number(decodedTelemetry.positionX ?? 0),
+          Number(decodedTelemetry.positionZ ?? 0),
+          now,
+        );
+      }
     } else {
       // Update lastPacketAt even for zero-like packets to keep connection alive
       const existing = state.players.get(clientId);
@@ -333,16 +421,16 @@ udpServer.on('message', (message, remote) => {
   broadcastPayload();
 });
 
-udpServer.on('error', (error) => {
-  console.error('UDP server error:', error);
+udpServer.on("error", (error) => {
+  console.error("UDP server error:", error);
 });
 
 udpServer.bind(UDP_PORT, HOST, () => {
-  const displayHost = HOST === '0.0.0.0' ? '127.0.0.1' : HOST;
+  const displayHost = HOST === "0.0.0.0" ? "127.0.0.1" : HOST;
 
   log(`Listening for FH6 telemetry on udp://${HOST}:${UDP_PORT}`);
   log(`Web interface: http://localhost:${PORT}`);
-  log('Forza settings -> HUD & Gameplay -> Telemetry:');
+  log("Forza settings -> HUD & Gameplay -> Telemetry:");
   log('  • Enable "Data Out"');
   log(`  • Data Out IP Address: ${displayHost}`);
   log(`  • Data Out Port: ${UDP_PORT}`);
@@ -352,81 +440,164 @@ const wss = new WebSocketServer({ noServer: true });
 const ingestWss = new WebSocketServer({ noServer: true });
 
 const server = http.createServer((request, response) => {
-  if (request.url === '/tiles-meta') {
+  if (request.url === "/tiles-meta") {
     response.writeHead(200, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': settings.server.cacheControl,
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": settings.server.cacheControl,
     });
     response.end(JSON.stringify(tileMeta));
     return;
   }
 
-  if (request.url === '/live-data') {
+  if (request.url === "/health") {
+    const now = Date.now();
+    let active = 0;
+    for (const p of state.players.values()) {
+      if (now - p.lastPacketAt <= CONNECTION_TIMEOUT_MS) active++;
+    }
+    const uptime = now - state.serverStartTime;
+    const health = {
+      status: "ok",
+      uptime,
+      uptimeHuman: `${Math.floor(uptime / 3600000)}h ${Math.floor((uptime % 3600000) / 60000)}m ${Math.floor((uptime % 60000) / 1000)}s`,
+      players: {
+        total: state.players.size,
+        active,
+        timeoutMs: CONNECTION_TIMEOUT_MS,
+      },
+      connections: { ws: clients.size, ingest: ingestClients.size },
+      packets: { total: state.packetCount, perSecond: packetsPerSecond() },
+      database: db.stats(),
+      server: {
+        udpPort: UDP_PORT,
+        httpPort: PORT,
+        startTime: state.serverStartTime,
+      },
+    };
     response.writeHead(200, {
-      'Content-Type': 'application/json; charset=utf-8',
-      'Cache-Control': settings.server.cacheControl,
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(JSON.stringify(health, null, 2));
+    return;
+  }
+
+  if (request.url === "/live-data") {
+    response.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": settings.server.cacheControl,
     });
     response.end(JSON.stringify(buildPayload()));
     return;
   }
 
-  const fileUrl = resolveFileUrl(request.url || '/');
+  if (request.url === "/api/heatmap/records") {
+    try {
+      const rows = db.getAllRecords();
+      const minTs = rows.length > 0 ? rows[0].ts : Date.now();
+      const maxTs = rows.length > 0 ? rows[rows.length - 1].ts : Date.now();
+      response.writeHead(200, {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-store",
+      });
+      response.write(
+        JSON.stringify({ total: rows.length, minTs, maxTs }) + "\n",
+      );
+      for (const row of rows) response.write(JSON.stringify(row) + "\n");
+      response.end();
+    } catch (err) {
+      console.error("Heatmap records error:", err);
+      response.writeHead(500);
+      response.end("Internal error");
+    }
+    return;
+  }
+
+  if (request.url.startsWith("/api/heatmap")) {
+    try {
+      const u = new URL(request.url, "http://localhost");
+      const from = Number(u.searchParams.get("from")) || 0;
+      const to = Number(u.searchParams.get("to")) || Date.now();
+      const rows = db.getHeatmap(from, to);
+      response.writeHead(200, {
+        "Content-Type": "application/x-ndjson",
+        "Cache-Control": "no-store",
+      });
+      response.write(JSON.stringify({ total: rows.length }) + "\n");
+      for (const row of rows) response.write(JSON.stringify(row) + "\n");
+      response.end();
+    } catch (err) {
+      console.error("Heatmap error:", err);
+      response.writeHead(500);
+      response.end("Internal error");
+    }
+    return;
+  }
+
+  const fileUrl = resolveFileUrl(request.url || "/");
 
   if (!fileUrl || !existsSync(fileUrl)) {
-    response.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-    response.end('Not found');
+    response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Not found");
     return;
   }
 
   try {
     const extension = extname(fileUrl.pathname).toLowerCase();
-    const contentType = MIME_TYPES[extension] || 'application/octet-stream';
+    const contentType = MIME_TYPES[extension] || "application/octet-stream";
     const content = readFileSync(fileUrl);
 
-    response.writeHead(200, { 'Content-Type': contentType, 'Cache-Control': settings.server.cacheControl });
+    response.writeHead(200, {
+      "Content-Type": contentType,
+      "Cache-Control": settings.server.cacheControl,
+    });
     response.end(content);
   } catch (error) {
-    response.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
-    response.end('Server error');
+    response.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Server error");
   }
 });
 
-server.on('upgrade', (request, socket, head) => {
-  if (!request.url || (!request.url.startsWith('/ws') && !request.url.startsWith('/client-ws'))) {
+server.on("upgrade", (request, socket, head) => {
+  if (
+    !request.url ||
+    (!request.url.startsWith("/ws") && !request.url.startsWith("/client-ws"))
+  ) {
     socket.destroy();
     return;
   }
 
-  if (request.url.startsWith('/ws')) {
+  if (request.url.startsWith("/ws")) {
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
+      wss.emit("connection", ws, request);
     });
     return;
   }
 
   ingestWss.handleUpgrade(request, socket, head, (ws) => {
-    ingestWss.emit('connection', ws, request);
+    ingestWss.emit("connection", ws, request);
   });
 });
 
-wss.on('connection', (ws) => {
+wss.on("connection", (ws) => {
   clients.add(ws);
   ws.send(JSON.stringify(buildPayload()));
 
-  ws.on('close', () => {
+  ws.on("close", () => {
     clients.delete(ws);
   });
 });
 
-ingestWss.on('connection', (ws, request) => {
-  const requestUrl = new URL(request.url, 'http://localhost');
-  const username = requestUrl.searchParams.get('username')?.trim() || 'Anonymous';
+ingestWss.on("connection", (ws, request) => {
+  const requestUrl = new URL(request.url, "http://localhost");
+  const username =
+    requestUrl.searchParams.get("username")?.trim() || "Anonymous";
   const clientId = `ingest:${randomUUID()}`;
 
   ingestClients.set(ws, { clientId, username });
-  ws.send(JSON.stringify({ type: 'ready', username }));
+  ws.send(JSON.stringify({ type: "ready", username }));
 
-  ws.on('message', (message) => {
+  ws.on("message", (message) => {
     const now = Date.now();
 
     try {
@@ -442,7 +613,7 @@ ingestWss.on('connection', (ws, request) => {
     }
   });
 
-  ws.on('close', () => {
+  ws.on("close", () => {
     ingestClients.delete(ws);
     state.players.delete(clientId);
     broadcastPayload();
@@ -451,4 +622,13 @@ ingestWss.on('connection', (ws, request) => {
 
 server.listen(PORT, HOST, () => {
   log(`FH6 Live Map Server running on http://${HOST}:${PORT}`);
+});
+
+process.on("SIGINT", () => {
+  db.close();
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  db.close();
+  process.exit(0);
 });

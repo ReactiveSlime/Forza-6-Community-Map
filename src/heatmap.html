@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FH6 Heatmap</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.heat@0.2.0/dist/leaflet-heat.js"></script>
+    <script type="module" src="/js/heatmap.js"></script>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 100%;
+        height: 100%;
+        background: #0f172a;
+      }
+      #map {
+        width: 100%;
+        height: 100%;
+      }
+      .loading {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0f172a;
+        color: #94a3b8;
+        font-family: system-ui, sans-serif;
+        font-size: 15px;
+        z-index: 9999;
+      }
+      .loading.hidden {
+        display: none;
+      }
+      #progress {
+        position: fixed;
+        top: 16px;
+        left: 16px;
+        z-index: 10000;
+        width: 200px;
+        height: 6px;
+        background: #1e293b;
+        border-radius: 3px;
+        overflow: hidden;
+      }
+      #progress.hidden {
+        display: none;
+      }
+      #progress__bar {
+        width: 0%;
+        height: 100%;
+        background: #fbbf24;
+        border-radius: 3px;
+        transition: width 0.2s;
+      }
+      #timeline {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        z-index: 10000;
+        background: rgba(15, 23, 42, 0.92);
+        padding: 8px 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-family: system-ui, sans-serif;
+        font-size: 12px;
+        color: #94a3b8;
+      }
+      #timeline.hidden {
+        display: none;
+      }
+      #timeline__label {
+        white-space: nowrap;
+        min-width: 160px;
+        text-align: center;
+        font-size: 11px;
+      }
+      #timeline__sliders {
+        position: relative;
+        flex: 1;
+        height: 40px;
+      }
+      #timeline__sliders input[type="range"] {
+        position: absolute;
+        left: 0;
+        width: 100%;
+        top: 18px;
+        height: 4px;
+        margin: 0;
+        -webkit-appearance: none;
+        appearance: none;
+        background: transparent;
+        pointer-events: none;
+      }
+      #timeline__sliders input[type="range"]::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        height: 18px;
+        width: 18px;
+        border-radius: 50%;
+        background: #fbbf24;
+        border: 2px solid #0f172a;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      #timeline__sliders input[type="range"]::-moz-range-thumb {
+        height: 18px;
+        width: 18px;
+        border-radius: 50%;
+        background: #fbbf24;
+        border: 2px solid #0f172a;
+        cursor: pointer;
+        pointer-events: auto;
+      }
+      #timeline__track {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 18px;
+        height: 4px;
+        background: #334155;
+        border-radius: 2px;
+        pointer-events: none;
+      }
+      #timeline__fill {
+        height: 100%;
+        background: #fbbf24;
+        border-radius: 2px;
+        transition: margin 0.05s;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="loading" class="loading">Loading heatmap...</div>
+    <div id="progress" class="hidden"><div id="progress__bar"></div></div>
+    <div id="map"></div>
+    <div id="timeline" class="hidden">
+      <span id="timeline__label">All time</span>
+      <div id="timeline__sliders">
+        <div id="timeline__track"><div id="timeline__fill"></div></div>
+        <input type="range" id="slider-from" min="0" max="100" value="0" />
+        <input type="range" id="slider-to" min="0" max="100" value="100" />
+      </div>
+    </div>
+  </body>
+</html>

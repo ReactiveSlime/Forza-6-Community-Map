@@ -1,3 +1,12 @@
+export const DEFAULT_CALIBRATION = {
+  calAWorld: [-921.8101806640625, -8571.4697265625],
+  calAPix: [2089190, 2092051],
+  calBWorld: [-7104.76953125, -1863.080322265625],
+  calBPix: [2086888, 2089556],
+  calCWorld: [5486.39013671875, 907.9600219726562],
+  calCPix: [2091573, 2088525],
+};
+
 function toPointPair(value) {
   if (!Array.isArray(value) || value.length < 2) return null;
   const x = Number(value[0]);

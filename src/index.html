@@ -18,27 +18,70 @@
       <div class="header__controls">
         <div class="header__stats">
           <div class="stat">
-            <span class="stat__label">No. Players connected</span>
+            <span class="stat__label">Players</span>
             <span class="stat__value"><span id="playerCount">0</span></span>
           </div>
+          <div class="stat">
+            <span class="stat__label">Status</span>
+            <span class="stat__value">
+              <span class="connection-status" id="connectionStatus"></span>
+              <span id="connectionText">Disconnected</span>
+            </span>
+          </div>
         </div>
-        <div class="unit-toggle" role="group" aria-label="Speed units">
-          <button
-            type="button"
-            class="unit-toggle__button active"
-            data-speed-unit="mph"
-            aria-pressed="true"
-          >
-            MPH
+        <button type="button" id="connectionInfoBtn" class="header__btn">
+          Connection Info
+        </button>
+        <div class="settings-dropdown">
+          <button type="button" id="settingsBtn" class="settings-dropdown__btn">
+            Settings
           </button>
-          <button
-            type="button"
-            class="unit-toggle__button"
-            data-speed-unit="km"
-            aria-pressed="false"
-          >
-            KM/H
-          </button>
+          <div id="settingsList" class="settings-dropdown__list">
+            <div class="settings-dropdown__section">Speed Units</div>
+            <div class="settings-dropdown__item">
+              <div class="unit-toggle" role="group" aria-label="Speed units">
+                <button
+                  type="button"
+                  class="unit-toggle__button active"
+                  data-speed-unit="mph"
+                  aria-pressed="true"
+                >
+                  MPH
+                </button>
+                <button
+                  type="button"
+                  class="unit-toggle__button"
+                  data-speed-unit="km"
+                  aria-pressed="false"
+                >
+                  KM/H
+                </button>
+              </div>
+            </div>
+            <div class="settings-dropdown__divider"></div>
+            <div class="settings-dropdown__item">
+              <button
+                type="button"
+                id="labelsBtn"
+                class="labels-btn"
+                aria-pressed="false"
+              >
+                Show/Hide Usernames
+              </button>
+            </div>
+            <div class="settings-dropdown__divider"></div>
+            <div class="settings-dropdown__item">
+              <label class="trail-setting"
+                >Trail
+                <input
+                  type="number"
+                  id="trailPoints"
+                  class="trail-setting__input"
+                  min="10"
+                  value="1000"
+              /></label>
+            </div>
+          </div>
         </div>
         <div class="player-dropdown">
           <button type="button" id="playerListBtn" class="player-dropdown__btn">
@@ -49,23 +92,35 @@
       </div>
     </div>
 
-    <div class="connection-panel">
-      <strong>Connection info:</strong>
-      <span class="muted"
-        >Go to game settings → HUD & Gameplay → Telemetry. Set Data Out to </span
-      ><strong>On</strong>, <span class="muted">Data Out IP to </span
-      ><strong>161.33.90.28</strong>,
-      <span class="muted">and Data Out IP Port to </span><strong>20441</strong>.
-      <br />
-      <span class="muted"
-        >If you want a custom username and map colour, download the companion
-        app: </span
-      ><a
-        href="https://cdn.reactivesli.me/programs/forza/companion/MapCompanion.exe"
-        target="_blank"
-        rel="noopener noreferrer"
-        >Map Companion Setup v2.0.0</a
-      >
+<div id="connectionModal" class="modal-overlay" style="display: none">
+      <div class="modal">
+        <div class="modal__header">
+          <strong>Connection Info</strong>
+          <button type="button" class="modal__close" id="modalClose">
+            &times;
+          </button>
+        </div>
+        <div class="modal__content">
+          <p>
+            Go to game settings → HUD & Gameplay → Telemetry. Set
+            <strong>Data Out</strong> to <strong>On</strong>,
+            <strong>Data Out IP</strong> to <strong>161.33.90.28</strong>, and
+            <strong>Data Out IP Port</strong> to <strong>20441</strong>.
+          </p>
+          <p>
+            If you want a custom username and map colour, download the companion
+            app:
+            
+              <a href="https://cdn.reactivesli.me/programs/forza/companion/Forza6Client-win-x64.exe"
+              rel="noopener noreferrer"
+              >Windows X86 v2.0.1</a>
+              <br />
+              <a href="https://cdn.reactivesli.me/programs/forza/companion/Forza6Client-linux-x64"
+              rel="noopener noreferrer"
+              >Linux X86 v2.0.1</a>
+          </p>
+        </div>
+      </div>
     </div>
 
     <div id="mapCanvas" aria-label="Forza live map"></div>
@@ -73,3 +128,4 @@
     <script type="module" src="/js/live-map.js"></script>
   </body>
 </html>
+"
