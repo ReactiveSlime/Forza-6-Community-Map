@@ -578,6 +578,19 @@ async function start() {
       if (e.target === modal) modal.style.display = "none";
     });
 
+    const feedbackModal = document.getElementById("feedbackModal");
+    const feedbackBtn = document.getElementById("feedbackBtn");
+    const feedbackCloseBtn = document.getElementById("feedbackModalClose");
+    feedbackBtn.addEventListener("click", () => {
+      feedbackModal.style.display = "";
+    });
+    feedbackCloseBtn.addEventListener("click", () => {
+      feedbackModal.style.display = "none";
+    });
+    feedbackModal.addEventListener("click", (e) => {
+      if (e.target === feedbackModal) feedbackModal.style.display = "none";
+    });
+
     const settingsBtn = document.getElementById("settingsBtn");
     const settingsList = document.getElementById("settingsList");
     settingsBtn.addEventListener("click", (e) => {
