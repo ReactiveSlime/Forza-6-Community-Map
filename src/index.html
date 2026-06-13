@@ -13,7 +13,6 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-
     <div class="header">
       <div class="header__title">FH6 Live Map</div>
       <div class="header__controls">
@@ -24,25 +23,52 @@
           </div>
         </div>
         <div class="unit-toggle" role="group" aria-label="Speed units">
-          <button type="button" class="unit-toggle__button active" data-speed-unit="mph" aria-pressed="true">MPH</button>
-          <button type="button" class="unit-toggle__button" data-speed-unit="km" aria-pressed="false">KM/H</button>
+          <button
+            type="button"
+            class="unit-toggle__button active"
+            data-speed-unit="mph"
+            aria-pressed="true"
+          >
+            MPH
+          </button>
+          <button
+            type="button"
+            class="unit-toggle__button"
+            data-speed-unit="km"
+            aria-pressed="false"
+          >
+            KM/H
+          </button>
         </div>
-        <button type="button" id="followPlayerToggle" class="follow-toggle active" aria-pressed="true">Follow selected</button>
+        <div class="player-dropdown">
+          <button type="button" id="playerListBtn" class="player-dropdown__btn">
+            Players
+          </button>
+          <div id="playerDropdownList" class="player-dropdown__list"></div>
+        </div>
       </div>
     </div>
 
     <div class="connection-panel">
       <strong>Connection info:</strong>
-      <span class="muted">Go to game settings → HUD & Gameplay → Telemetry. Set Data Out to </span><strong>On</strong>,
-      <span class="muted">Data Out IP to </span><strong>161.33.90.28</strong>,
+      <span class="muted"
+        >Go to game settings → HUD & Gameplay → Telemetry. Set Data Out to </span
+      ><strong>On</strong>, <span class="muted">Data Out IP to </span
+      ><strong>161.33.90.28</strong>,
       <span class="muted">and Data Out IP Port to </span><strong>20441</strong>.
       <br />
-      <span class="muted">If you want a custom username and map colour, download the conpanion app: </span><a href="https://cdn.reactivesli.me/programs/forza/companion/installer.exe" target="_blank" rel="noopener noreferrer">Map Companion Setup v1.0.0</a>
+      <span class="muted"
+        >If you want a custom username and map colour, download the conpanion
+        app: </span
+      ><a
+        href="https://cdn.reactivesli.me/programs/forza/companion/installer.exe"
+        target="_blank"
+        rel="noopener noreferrer"
+        >Map Companion Setup v1.0.0</a
+      >
     </div>
 
     <div id="mapCanvas" aria-label="Forza live map"></div>
-
-    
 
     <script type="module" src="/js/live-map.js"></script>
   </body>

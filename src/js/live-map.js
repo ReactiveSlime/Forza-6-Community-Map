@@ -1,69 +1,37 @@
-import { initMap, buildCalibrationTransform } from './map.js';
+import { buildCalibrationTransform } from "./calibration.js";
+import {
+  buildPlayerIcon,
+  buildPopupHtml,
+  getColorForPlayer,
+} from "./markers.js";
+import { initMap } from "./map.js";
 
 let mapController = null;
 let ws = null;
 let wsReconnectTimer = null;
 let activePlayer = null;
-let followActivePlayer = true;
+let following = false;
 let latestCalibration = null;
-let speedUnit = 'mph';
+let speedUnit = "mph";
 const playerMarkers = new Map();
 const playerData = new Map();
 
 const RECONNECT_DELAY = 3000;
 const WS_URL = (() => {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${protocol}//${window.location.host}/ws`;
 })();
 
-function getColorForPlayer(playerIdentity) {
-  // Generate consistent color for each player based on their visible identity.
-  let hash = 0;
-  for (let i = 0; i < playerIdentity.length; i++) {
-    const char = playerIdentity.charCodeAt(i);
-    hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32bit integer
-  }
-
-  const colors = [
-    '#fbbf24', // amber
-    '#10b981', // emerald
-    '#3b82f6', // blue
-    '#f87171', // red
-    '#a78bfa', // violet
-    '#ec4899', // pink
-    '#14b8a6', // teal
-    '#f97316', // orange
-  ];
-
-  return colors[Math.abs(hash) % colors.length];
-}
-
-function buildPlayerIcon(headingDeg, color = '#fbbf24', size = 24) {
-  if (!mapController?.L) return null;
-
-  return mapController.L.divIcon({
-    className: 'player-marker',
-    html:
-      `<svg width="${size}" height="${size}" viewBox="0 0 24 24" style="filter: drop-shadow(0 2px 4px rgba(0,0,0,0.5));">` +
-      `<path transform="rotate(${headingDeg} 12 12)" ` +
-      `d="M12 2 L19 21 L12 15 L5 21 Z" fill="${color}" ` +
-      `stroke="#000" stroke-width="1.5" stroke-linejoin="round"/></svg>`,
-    iconSize: [size, size],
-    iconAnchor: [size / 2, size / 2],
-  });
-}
-
 function normalizeSpeedUnit(value) {
-  return value === 'km' ? 'km' : 'mph';
+  return value === "km" ? "km" : "mph";
 }
 
 function getSpeedLabel() {
-  return speedUnit === 'km' ? 'km/h' : 'mph';
+  return speedUnit === "km" ? "km/h" : "mph";
 }
 
 function getSpeedValue(telemetry) {
-  if (speedUnit === 'km') {
+  if (speedUnit === "km") {
     return Math.round(Number(telemetry.speedKph ?? 0));
   }
 
@@ -71,28 +39,18 @@ function getSpeedValue(telemetry) {
 }
 
 function updateSpeedUnitToggle() {
-  const buttons = document.querySelectorAll('[data-speed-unit]');
+  const buttons = document.querySelectorAll("[data-speed-unit]");
 
   buttons.forEach((button) => {
     const isActive = button.dataset.speedUnit === speedUnit;
-    button.classList.toggle('active', isActive);
-    button.setAttribute('aria-pressed', String(isActive));
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-pressed", String(isActive));
   });
 
-  const labelEl = document.getElementById('speedUnitLabel');
+  const labelEl = document.getElementById("speedUnitLabel");
   if (labelEl) {
     labelEl.textContent = getSpeedLabel();
   }
-}
-
-function updateFollowToggle() {
-  const button = document.getElementById('followPlayerToggle');
-
-  if (!button) return;
-
-  button.classList.toggle('active', followActivePlayer);
-  button.setAttribute('aria-pressed', String(followActivePlayer));
-  button.textContent = followActivePlayer ? 'Follow selected' : 'Follow off';
 }
 
 function setSpeedUnit(nextUnit) {
@@ -114,7 +72,12 @@ function getPlayerLatLng(clientId, calibration) {
   const worldX = Number(tel.positionX ?? 0);
   const worldZ = Number(tel.positionZ ?? 0);
 
-  if ((worldX === 0 && worldZ === 0) || !Number.isFinite(worldX) || !Number.isFinite(worldZ)) return null;
+  if (
+    (worldX === 0 && worldZ === 0) ||
+    !Number.isFinite(worldX) ||
+    !Number.isFinite(worldZ)
+  )
+    return null;
 
   return worldToLatLng(worldX, worldZ, calibration);
 }
@@ -132,16 +95,7 @@ function focusOnPlayer(clientId, calibration, { animate = false } = {}) {
 function setActivePlayer(clientId) {
   activePlayer = clientId;
 
-  if (followActivePlayer && activePlayer) {
-    focusOnPlayer(activePlayer, latestCalibration);
-  }
-}
-
-function setFollowActivePlayer(nextFollow) {
-  followActivePlayer = Boolean(nextFollow);
-  updateFollowToggle();
-
-  if (followActivePlayer && activePlayer) {
+  if (activePlayer) {
     focusOnPlayer(activePlayer, latestCalibration);
   }
 }
@@ -156,10 +110,18 @@ function worldToLatLng(worldX, worldZ, calibration) {
     return null;
   }
 
-  return mapController.map.unproject(mapController.L.point(point.x, point.y), mapController.map.getMaxZoom());
+  return mapController.map.unproject(
+    mapController.L.point(point.x, point.y),
+    mapController.map.getMaxZoom(),
+  );
 }
 
-function updatePlayerMarker(clientId, telemetry, calibration, markerColor = null) {
+function updatePlayerMarker(
+  clientId,
+  telemetry,
+  calibration,
+  markerColor = null,
+) {
   if (!mapController || !calibration) return;
   const player = playerData.get(clientId) || {};
   const playerName = player.username || clientId;
@@ -167,30 +129,42 @@ function updatePlayerMarker(clientId, telemetry, calibration, markerColor = null
   const worldX = Number(telemetry.positionX ?? 0);
   const worldZ = Number(telemetry.positionZ ?? 0);
 
-  if ((worldX === 0 && worldZ === 0) || !Number.isFinite(worldX) || !Number.isFinite(worldZ)) return;
+  if (
+    (worldX === 0 && worldZ === 0) ||
+    !Number.isFinite(worldX) ||
+    !Number.isFinite(worldZ)
+  )
+    return;
 
   const latLng = worldToLatLng(worldX, worldZ, calibration);
   if (!latLng) return;
 
   const headingDeg = ((Number(telemetry.yaw || 0) * 180) / Math.PI) % 360;
   const color = markerColor || getColorForPlayer(playerName);
-  const popupHtml = buildPopupHtml({ clientId, playerName, telemetry });
+  const popupHtml = buildPopupHtml({
+    playerName,
+    telemetry,
+    speedValue: getSpeedValue(telemetry),
+    speedLabel: getSpeedLabel(),
+  });
 
   let marker = playerMarkers.get(clientId);
 
   if (!marker) {
     marker = mapController.L.marker(latLng, {
-      icon: buildPlayerIcon(headingDeg, color),
-      title: `${playerName} - ${telemetry.carName || 'Player'}`,
+      icon: buildPlayerIcon(mapController.L, headingDeg, color),
+      title: `${playerName} - ${telemetry.carName || "Player"}`,
       interactive: true,
     }).addTo(mapController.map);
 
     marker.bindPopup(popupHtml, { maxWidth: 320 });
-    marker.on('click', () => {
-      setFollowActivePlayer(true);
+    marker.on("click", () => {
+      following = true;
       setActivePlayer(clientId);
       marker.openPopup();
-      focusOnPlayer(clientId, latestCalibration || calibration, { animate: true });
+      focusOnPlayer(clientId, latestCalibration || calibration, {
+        animate: true,
+      });
     });
 
     playerMarkers.set(clientId, marker);
@@ -201,13 +175,13 @@ function updatePlayerMarker(clientId, telemetry, calibration, markerColor = null
     // because it recreates the DOM element and can break popup click listeners.
     const iconEl = marker.getElement?.();
     if (iconEl) {
-      const path = iconEl.querySelector('path');
+      const path = iconEl.querySelector("path");
       if (path) {
-        path.setAttribute('transform', `rotate(${headingDeg} 12 12)`);
+        path.setAttribute("transform", `rotate(${headingDeg} 12 12)`);
       }
     } else {
       // Fallback: element not yet in DOM, safe to replace icon
-      marker.setIcon(buildPlayerIcon(headingDeg, color));
+      marker.setIcon(buildPlayerIcon(mapController.L, headingDeg, color));
     }
 
     // Always ensure popup exists and has fresh content
@@ -220,23 +194,6 @@ function updatePlayerMarker(clientId, telemetry, calibration, markerColor = null
   }
 }
 
-
-function buildPopupHtml({ playerName, telemetry }) {
-  const tel = telemetry || {};
-  const speedValue = getSpeedValue(tel);
-  const classText = tel.carClassLabel || 'N/A';
-  const performanceIndex = Number.isFinite(Number(tel.carPerformanceIndex))
-    ? Number(tel.carPerformanceIndex)
-    : 'N/A';
-  return `
-    <div style="font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; color: #111;">
-      <div style="font-size:12px; text-transform:uppercase; letter-spacing:0.08em; color:#666; margin-bottom:4px;">${playerName || 'Anonymous'}</div>
-      <div style="font-weight:700; font-size:16px; margin-bottom:6px;">${tel.carName || 'Unknown Car'}</div>
-      <div style="font-size:14px;"><strong>Speed:</strong> ${speedValue} ${getSpeedLabel()}</div>
-      <div style="font-size:14px;"><strong>Class:</strong> ${classText} | ${performanceIndex}</div>
-    </div>
-  `;
-}
 function updatePlayersList(players, calibration) {
   latestCalibration = calibration;
 
@@ -265,7 +222,12 @@ function updatePlayersList(players, calibration) {
 
     // Update marker on map
     if (player.telemetry) {
-      updatePlayerMarker(player.clientId, player.telemetry, calibration, player.markerColor);
+      updatePlayerMarker(
+        player.clientId,
+        player.telemetry,
+        calibration,
+        player.markerColor,
+      );
     }
   }
 
@@ -282,13 +244,40 @@ function updatePlayersList(players, calibration) {
     activePlayer = null;
   }
 
-  if (followActivePlayer && !activePlayer && players.length === 1) {
+  if (following && !activePlayer && players.length === 1) {
     activePlayer = players[0].clientId;
   }
 
-  if (followActivePlayer && activePlayer) {
+  if (following && activePlayer) {
     focusOnPlayer(activePlayer, calibration);
   }
+
+  updatePlayerDropdown();
+}
+
+function updatePlayerDropdown() {
+  const list = document.getElementById("playerDropdownList");
+  if (!list || list.classList.contains("open")) return;
+
+  if (playerData.size === 0) {
+    list.innerHTML =
+      '<div class="player-dropdown__empty">No players connected</div>';
+    return;
+  }
+
+  let html = "";
+  for (const [clientId, player] of playerData) {
+    const name = player.username || clientId;
+    const car = player.telemetry?.carName || "Unknown";
+    const color = player.markerColor || getColorForPlayer(name);
+    const active = clientId === activePlayer ? " active" : "";
+    html += `<div class="player-dropdown__item${active}" onclick="window.selectPlayer('${clientId}');this.closest('.player-dropdown__list').classList.remove('open');document.getElementById('playerListBtn').classList.remove('open')">
+      <span class="player-dropdown__dot" style="background:${color}"></span>
+      <span class="player-dropdown__name">${name}</span>
+      <span class="player-dropdown__car">${car}</span>
+    </div>`;
+  }
+  list.innerHTML = html;
 }
 
 function connectWebSocket() {
@@ -296,7 +285,7 @@ function connectWebSocket() {
     ws = new WebSocket(WS_URL);
 
     ws.onopen = () => {
-      console.log('WebSocket connected');
+      console.log("WebSocket connected");
       updateConnectionStatus(true);
       if (wsReconnectTimer) {
         clearTimeout(wsReconnectTimer);
@@ -308,40 +297,40 @@ function connectWebSocket() {
       try {
         const payload = JSON.parse(event.data);
         const playerCount = payload.playerCount || 0;
-        document.getElementById('playerCount').textContent = playerCount;
+        document.getElementById("playerCount").textContent = playerCount;
 
         // Get calibration from map
-        const calibration = mapController?.getCalibration?.() ? 
-          buildCalibrationTransform(mapController.getCalibration()) : 
-          buildCalibrationTransform({
-            calAWorld: [-921.8101806640625, -8571.4697265625],
-            calAPix: [2089190, 2092051],
-            calBWorld: [-7104.76953125, -1863.080322265625],
-            calBPix: [2086888, 2089556],
-            calCWorld: [5486.39013671875, 907.9600219726562],
-            calCPix: [2091573, 2088525],
-          });
+        const calibration = mapController?.getCalibration?.()
+          ? buildCalibrationTransform(mapController.getCalibration())
+          : buildCalibrationTransform({
+              calAWorld: [-921.8101806640625, -8571.4697265625],
+              calAPix: [2089190, 2092051],
+              calBWorld: [-7104.76953125, -1863.080322265625],
+              calBPix: [2086888, 2089556],
+              calCWorld: [5486.39013671875, 907.9600219726562],
+              calCPix: [2091573, 2088525],
+            });
 
         if (payload.players && Array.isArray(payload.players)) {
           updatePlayersList(payload.players, calibration);
         }
       } catch (error) {
-        console.error('Error processing WebSocket message:', error);
+        console.error("Error processing WebSocket message:", error);
       }
     };
 
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
+      console.error("WebSocket error:", error);
       updateConnectionStatus(false);
     };
 
     ws.onclose = () => {
-      console.log('WebSocket disconnected');
+      console.log("WebSocket disconnected");
       updateConnectionStatus(false);
       scheduleReconnect();
     };
   } catch (error) {
-    console.error('Failed to create WebSocket:', error);
+    console.error("Failed to create WebSocket:", error);
     updateConnectionStatus(false);
     scheduleReconnect();
   }
@@ -354,69 +343,84 @@ function scheduleReconnect() {
 
   wsReconnectTimer = setTimeout(() => {
     wsReconnectTimer = null;
-    console.log('Attempting to reconnect...');
+    console.log("Attempting to reconnect...");
     connectWebSocket();
   }, RECONNECT_DELAY);
 }
 
 function updateConnectionStatus(connected) {
-  const statusEl = document.getElementById('connectionStatus');
-  const textEl = document.getElementById('connectionText');
+  const statusEl = document.getElementById("connectionStatus");
+  const textEl = document.getElementById("connectionText");
 
   if (statusEl) {
-    statusEl.className = `connection-status ${connected ? 'connected' : 'disconnected'}`;
+    statusEl.className = `connection-status ${connected ? "connected" : "disconnected"}`;
   }
 
   if (textEl) {
-    textEl.textContent = connected ? 'Connected' : 'Disconnected';
+    textEl.textContent = connected ? "Connected" : "Disconnected";
   }
 }
 
 async function start() {
   try {
     mapController = await initMap({
-      host: document.getElementById('mapCanvas'),
+      host: document.getElementById("mapCanvas"),
       compact: false,
     });
 
     if (!mapController) {
-      console.error('Failed to initialize map');
+      console.error("Failed to initialize map");
       return;
     }
 
     speedUnit = normalizeSpeedUnit(mapController.getSpeedUnit?.());
     updateSpeedUnitToggle();
-    updateFollowToggle();
 
-    const followButton = document.getElementById('followPlayerToggle');
-    if (followButton) {
-      followButton.addEventListener('click', () => {
-        setFollowActivePlayer(!followActivePlayer);
-      });
-    }
+    mapController.map.on("click", () => {
+      following = false;
+      activePlayer = null;
+    });
 
-    console.log('Map initialized');
+    mapController.map.on("dragstart", () => {
+      following = false;
+      activePlayer = null;
+    });
+
+    const playerBtn = document.getElementById("playerListBtn");
+    const playerList = document.getElementById("playerDropdownList");
+    playerBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const open = playerList.classList.toggle("open");
+      playerBtn.classList.toggle("open", open);
+    });
+    document.addEventListener("click", () => {
+      playerList.classList.remove("open");
+      playerBtn.classList.remove("open");
+    });
+    playerList.addEventListener("click", (e) => e.stopPropagation());
+
+    console.log("Map initialized");
     connectWebSocket();
   } catch (error) {
-    console.error('Error starting live map:', error);
+    console.error("Error starting live map:", error);
   }
 }
 
 // Global function for player selection
 window.selectPlayer = (clientId) => {
-  setFollowActivePlayer(true);
+  following = true;
   setActivePlayer(clientId);
 };
 
-document.querySelectorAll('[data-speed-unit]').forEach((button) => {
-  button.addEventListener('click', () => {
+document.querySelectorAll("[data-speed-unit]").forEach((button) => {
+  button.addEventListener("click", () => {
     setSpeedUnit(button.dataset.speedUnit);
   });
 });
 
 start();
 
-window.addEventListener('beforeunload', () => {
+window.addEventListener("beforeunload", () => {
   if (ws) {
     ws.close();
   }
