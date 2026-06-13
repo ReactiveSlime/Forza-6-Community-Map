@@ -25,6 +25,11 @@ Point your Forza Horizon 6 game to this live map to display real-time data onlin
    npm install
    ```
 
+3. Download tilemaps:
+   ```
+   npm run download-tiles
+   ```
+
 3. Start the server:
    ```
    npm start
