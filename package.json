@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.js",
-    "download-tiles": "node scripts/download-map-tiles.mjs --all --out static/maptiles"
+    "download-tiles": "node scripts/download-map-tiles.mjs --all --out src/static/maptiles"
   },
   "dependencies": {
     "ws": "^8.21.0"
