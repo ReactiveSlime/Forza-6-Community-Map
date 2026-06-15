@@ -11,3 +11,5 @@ NUL
 *.db
 *.db-shm
 *.db-wal
+scripts/seed-demo-data.js
+server.log

@@ -484,3 +484,60 @@ body {
     right: -40px;
   }
 }
+
+/* === Heatmap page === */
+.heatmap-page {
+  display: flex;
+  flex-direction: column;
+}
+
+.heatmap-header {
+  background: rgba(15, 23, 42, 0.95);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  padding: 12px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.heatmap-header__title {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
+
+.heatmap-header__stats {
+  display: flex;
+  gap: 24px;
+  font-size: 13px;
+}
+
+.heatmap-header__back {
+  color: #fbbf24;
+  text-decoration: none;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 999px;
+  transition: background 0.15s;
+}
+
+.heatmap-header__back:hover {
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.progress-bar {
+  height: 3px;
+  background: rgba(148, 163, 184, 0.15);
+  width: 100%;
+}
+
+.progress-bar__fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #00ff00, #ffff00, #ff6600, #ff0000);
+  transition: width 0.3s ease;
+}

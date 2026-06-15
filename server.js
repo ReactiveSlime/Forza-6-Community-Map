@@ -491,46 +491,19 @@ const server = http.createServer((request, response) => {
     return;
   }
 
-  if (request.url === "/api/heatmap/records") {
-    try {
-      const rows = db.getAllRecords();
-      const minTs = rows.length > 0 ? rows[0].ts : Date.now();
-      const maxTs = rows.length > 0 ? rows[rows.length - 1].ts : Date.now();
-      response.writeHead(200, {
-        "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-store",
-      });
-      response.write(
-        JSON.stringify({ total: rows.length, minTs, maxTs }) + "\n",
-      );
-      for (const row of rows) response.write(JSON.stringify(row) + "\n");
-      response.end();
-    } catch (err) {
-      console.error("Heatmap records error:", err);
-      response.writeHead(500);
-      response.end("Internal error");
-    }
-    return;
-  }
-
-  if (request.url.startsWith("/api/heatmap")) {
-    try {
-      const u = new URL(request.url, "http://localhost");
-      const from = Number(u.searchParams.get("from")) || 0;
-      const to = Number(u.searchParams.get("to")) || Date.now();
-      const rows = db.getHeatmap(from, to);
-      response.writeHead(200, {
-        "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-store",
-      });
-      response.write(JSON.stringify({ total: rows.length }) + "\n");
-      for (const row of rows) response.write(JSON.stringify(row) + "\n");
-      response.end();
-    } catch (err) {
-      console.error("Heatmap error:", err);
-      response.writeHead(500);
-      response.end("Internal error");
-    }
+  if (request.url.startsWith("/api/positions")) {
+    const url = new URL(request.url, "http://localhost");
+    const offset = parseInt(url.searchParams.get("offset") || "0", 10);
+    const limit = Math.min(
+      parseInt(url.searchParams.get("limit") || "10000", 10),
+      10000,
+    );
+    const result = db.query(offset, limit);
+    response.writeHead(200, {
+      "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    response.end(JSON.stringify(result));
     return;
   }
 

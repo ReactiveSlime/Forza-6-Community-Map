@@ -1,5 +1,4 @@
 import { DatabaseSync } from "node:sqlite";
-import { randomUUID } from "node:crypto";
 
 const FLUSH_INTERVAL = 3000;
 let db = null;
@@ -23,6 +22,10 @@ export function initDb(path) {
   const insertPos = db.prepare(
     "INSERT INTO positions (player, ts, x, z, weight) VALUES (?, ?, ?, ?, ?)",
   );
+  const countStmt = db.prepare("SELECT COUNT(*) AS total FROM positions");
+  const queryStmt = db.prepare(
+    "SELECT id, player, ts, x, z, weight FROM positions ORDER BY id LIMIT ? OFFSET ?",
+  );
 
   flushTimer = setInterval(() => flush(insertPos), FLUSH_INTERVAL);
 
@@ -30,23 +33,13 @@ export function initDb(path) {
     record(player, x, z, ts) {
       buffers.push([player, ts, x, z, 1]);
     },
-    getHeatmap(from, to) {
-      return db
-        .prepare(
-          `SELECT ROUND(x * 2, 0) / 2 AS x, ROUND(z * 2, 0) / 2 AS z, COUNT(*) AS weight
-           FROM positions WHERE ts >= ? AND ts <= ?
-           GROUP BY ROUND(x * 2, 0) / 2, ROUND(z * 2, 0) / 2
-           ORDER BY weight DESC`,
-        )
-        .all(from, to);
+    query(offset, limit) {
+      const { total } = countStmt.get();
+      const rows = queryStmt.all(limit, offset);
+      return { total, rows, hasMore: offset + rows.length < total };
     },
-
-    getAllRecords() {
-      return db.prepare("SELECT x, z, ts FROM positions ORDER BY ts").all();
-    },
-
     stats() {
-      const r = db.prepare("SELECT COUNT(*) AS total FROM positions").get();
+      const r = countStmt.get();
       return { total: r.total, bufferSize: buffers.length };
     },
     close() {
